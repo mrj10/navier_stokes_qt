@@ -107,7 +107,7 @@ void FluidWidget::paintEvent(QPaintEvent * /* event */)
         painter.save();
         painter.translate(newX, newY);
         painter.scale(scaleFactor, scaleFactor);
-        QRectF exposed = painter.matrix().inverted().mapRect(rect()).adjusted(-1, -1, 1, 1);
+        QRectF exposed = painter.worldTransform().inverted().mapRect(rect()).adjusted(-1, -1, 1, 1);
         painter.drawPixmap(exposed, pixmap, exposed);
         painter.restore();
     }
