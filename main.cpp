@@ -40,13 +40,13 @@
 
 #include <QApplication>
 
-#include "mandelbrotwidget.h"
+#include "fluidwidget.h"
 
 //! [0]
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
-    MandelbrotWidget widget;
+    FluidWidget widget;
     widget.show();
     return app.exec();
 }

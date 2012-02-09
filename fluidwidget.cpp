@@ -42,7 +42,7 @@
 
 #include <math.h>
 
-#include "mandelbrotwidget.h"
+#include "fluidwidget.h"
 
 //! [0]
 const double DefaultCenterX = -0.637011f;
@@ -55,7 +55,7 @@ const int ScrollStep = 20;
 //! [0]
 
 //! [1]
-MandelbrotWidget::MandelbrotWidget(QWidget *parent)
+FluidWidget::FluidWidget(QWidget *parent)
     : QWidget(parent)
 {
     centerX = DefaultCenterX;
@@ -67,7 +67,7 @@ MandelbrotWidget::MandelbrotWidget(QWidget *parent)
     connect(&thread, SIGNAL(renderedImage(QImage,double)),
             this, SLOT(updatePixmap(QImage,double)));
 
-    setWindowTitle(tr("Mandelbrot"));
+    setWindowTitle(tr("Fluid"));
 #ifndef QT_NO_CURSOR
     setCursor(Qt::CrossCursor);
 #endif
@@ -76,7 +76,7 @@ MandelbrotWidget::MandelbrotWidget(QWidget *parent)
 //! [1]
 
 //! [2]
-void MandelbrotWidget::paintEvent(QPaintEvent * /* event */)
+void FluidWidget::paintEvent(QPaintEvent * /* event */)
 {
     QPainter painter(this);
     painter.fillRect(rect(), Qt::black);
@@ -129,14 +129,14 @@ void MandelbrotWidget::paintEvent(QPaintEvent * /* event */)
 //! [9]
 
 //! [10]
-void MandelbrotWidget::resizeEvent(QResizeEvent * /* event */)
+void FluidWidget::resizeEvent(QResizeEvent * /* event */)
 {
     thread.render(centerX, centerY, curScale, size());
 }
 //! [10]
 
 //! [11]
-void MandelbrotWidget::keyPressEvent(QKeyEvent *event)
+void FluidWidget::keyPressEvent(QKeyEvent *event)
 {
     switch (event->key()) {
     case Qt::Key_Plus:
@@ -164,7 +164,7 @@ void MandelbrotWidget::keyPressEvent(QKeyEvent *event)
 //! [11]
 
 //! [12]
-void MandelbrotWidget::wheelEvent(QWheelEvent *event)
+void FluidWidget::wheelEvent(QWheelEvent *event)
 {
     int numDegrees = event->delta() / 8;
     double numSteps = numDegrees / 15.0f;
@@ -173,7 +173,7 @@ void MandelbrotWidget::wheelEvent(QWheelEvent *event)
 //! [12]
 
 //! [13]
-void MandelbrotWidget::mousePressEvent(QMouseEvent *event)
+void FluidWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
         lastDragPos = event->pos();
@@ -181,7 +181,7 @@ void MandelbrotWidget::mousePressEvent(QMouseEvent *event)
 //! [13]
 
 //! [14]
-void MandelbrotWidget::mouseMoveEvent(QMouseEvent *event)
+void FluidWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (event->buttons() & Qt::LeftButton) {
         pixmapOffset += event->pos() - lastDragPos;
@@ -192,7 +192,7 @@ void MandelbrotWidget::mouseMoveEvent(QMouseEvent *event)
 //! [14]
 
 //! [15]
-void MandelbrotWidget::mouseReleaseEvent(QMouseEvent *event)
+void FluidWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         pixmapOffset += event->pos() - lastDragPos;
@@ -206,7 +206,7 @@ void MandelbrotWidget::mouseReleaseEvent(QMouseEvent *event)
 //! [15]
 
 //! [16]
-void MandelbrotWidget::updatePixmap(const QImage &image, double scaleFactor)
+void FluidWidget::updatePixmap(const QImage &image, double scaleFactor)
 {
     if (!lastDragPos.isNull())
         return;
@@ -220,7 +220,7 @@ void MandelbrotWidget::updatePixmap(const QImage &image, double scaleFactor)
 //! [16]
 
 //! [17]
-void MandelbrotWidget::zoom(double zoomFactor)
+void FluidWidget::zoom(double zoomFactor)
 {
     curScale *= zoomFactor;
     update();
@@ -229,7 +229,7 @@ void MandelbrotWidget::zoom(double zoomFactor)
 //! [17]
 
 //! [18]
-void MandelbrotWidget::scroll(int deltaX, int deltaY)
+void FluidWidget::scroll(int deltaX, int deltaY)
 {
     centerX += deltaX * curScale;
     centerY += deltaY * curScale;

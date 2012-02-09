@@ -38,8 +38,8 @@
 **
 ****************************************************************************/
 
-#ifndef MANDELBROTWIDGET_H
-#define MANDELBROTWIDGET_H
+#ifndef FluidWIDGET_H
+#define FluidWIDGET_H
 
 #include <QPixmap>
 #include <QWidget>
@@ -47,12 +47,12 @@
 #include "renderthread.h"
 
 //! [0]
-class MandelbrotWidget : public QWidget
+class FluidWidget : public QWidget
 {
     Q_OBJECT
 
 public:
-    MandelbrotWidget(QWidget *parent = 0);
+    FluidWidget(QWidget *parent = 0);
 
 protected:
     void paintEvent(QPaintEvent *event);
