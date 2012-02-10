@@ -45,6 +45,13 @@
 #include <QSize>
 #include <QThread>
 #include <QWaitCondition>
+#include <QQueue>
+#include <QPair>
+#include <QVector2D>
+#include <QColor>
+#include <QImage>
+#include <QElapsedTimer>
+#include "fluid_update.h"
 
 QT_BEGIN_NAMESPACE
 class QImage;
@@ -59,11 +66,10 @@ public:
     RenderThread(QObject *parent = 0);
     ~RenderThread();
 
-    void render(double centerX, double centerY, double scaleFactor,
-                QSize resultSize);
+    void render(QSize resultSize, FluidUpdate update);
 
 signals:
-    void renderedImage(const QImage &image, double scaleFactor);
+    void renderedImage(const QImage &image);
 
 protected:
     void run();
@@ -73,15 +79,14 @@ private:
 
     QMutex mutex;
     QWaitCondition condition;
-    double centerX;
-    double centerY;
-    double scaleFactor;
     QSize resultSize;
+    QQueue<FluidUpdate> updateQueue;
     bool restart;
+    bool resize;
     bool abort;
-
-    enum { ColormapSize = 512 };
-    uint colormap[ColormapSize];
+    double *u, *v, *u_prev, *v_prev, *dens, *dens_prev;
+    QByteArray image_data;
+    QElapsedTimer timer;
 };
 //! [0]
 

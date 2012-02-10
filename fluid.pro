@@ -1,8 +1,13 @@
 HEADERS       = fluidwidget.h \
-                renderthread.h
+                renderthread.h \
+								fluid_update.h
 SOURCES       = main.cpp \
                 fluidwidget.cpp \
                 renderthread.cpp
+
+CONFIG += release
+
+QMAKE_CXXFLAGS_RELEASE += -Ofast -mtune=native -flto
 
 unix:!mac:!symbian:!vxworks:LIBS += -lm
 

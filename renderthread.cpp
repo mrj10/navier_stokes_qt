@@ -37,26 +37,154 @@
 ** $QT_END_LICENSE$
 **
 ****************************************************************************/
-
-#include <QtGui>
-
-#include <math.h>
-
 #include "renderthread.h"
 
-//! [0]
+#include <QtGui>
+#include <cstdio>
+#include <cmath>
+#include <algorithm>
+
+#include "fluid_update.h"
+
+//The fluid dynamics code is based (heavily) on "Real-Time Fluid Dynamics for Games"
+//by Jos Stam.
+
+const double density_increment = 200;
+const double velocity_increment = 5000;
+
+
+#define IX(i, j, M, N) ((j)+(N+2)*(i))
+#define SWAP(x0, x) do {double *tmp = x0; x0 = x; x = tmp; } while (0)
+
+const double VISC = 200.0;
+const double DIFF = 0.1;
+
+void set_bnd(int M, int N, int b, double *x) {
+    for(int i = 1; i <= N; i++) {
+        x[IX(0, i, M, N)] = b==1 ? -x[IX(1, i, M, N)] : x[IX(1, i, M, N)];
+        x[IX(M+1, i, M, N)] = b==1 ? -x[IX(M, i, M, N)] : x[IX(M, i, M, N)];
+    }
+    for(int i = 1; i <= M; i++) {
+        x[IX(i, 0, M, N)] = b==2 ? -x[IX(i, 1, M, N)] : x[IX(i, 1, M, N)];
+        x[IX(i, N+1, M, N)] = b==2 ? -x[IX(i, N, M, N)] : x[IX(i, N, M, N)];
+    }
+    x[IX(0, 0, M, N)] = 0.5*(x[IX(1, 0, M, N)] + x[IX(0, 1, M, N)]);
+    x[IX(0, N+1, M, N)] = 0.5*(x[IX(1, N+1, M, N)] + x[IX(0, N, M, N)]);
+    x[IX(M+1, 0, M, N)] = 0.5*(x[IX(M, 0, M, N)] + x[IX(M+1, 1, M, N)]);
+    x[IX(M+1, N+1, M, N)] = 0.5*(x[IX(M, N+1, M, N)] + x[IX(M+1, N, M, N)]);
+}
+
+void add_source(int M, int N, double *x, double *s, double dt) {
+  for(int i = 0; i < (M*N); i++)
+    x[i] += dt * s[i];
+}
+
+void diffuse(int M, int N, int b, double *x, double *x0, double diff, double dt) {
+    double a = dt * diff * M * N;
+    for(int k = 0; k < 50; k++) {
+        for(int i = 1; i <= M; i++) {
+            for(int j = 1; j <= N; j++) {
+                x[IX(i, j, M, N)] = (x0[IX(i, j, M, N)] + a*(x[IX(i-1, j, M, N)] + x[IX(i+1, j, M, N)] +
+                                                            x[IX(i, j-1, M, N)] + x[IX(i, j+1, M, N)])) / (1+4*a);
+            }
+        }
+        set_bnd(M, N, b, x);
+    }
+}
+
+void advect(int M, int N, int b, double *d, double *d0, double *u, double *v, double dt) {
+    int dtx0 = dt*N;
+    int dty0 = dt*M;
+    for(int i = 1; i <= M; i++) {
+        for(int j = 1; j <= N; j++) {
+            double x = i - (dtx0 * u[IX(i, j, M, N)]);
+            double y = j - (dty0 * v[IX(i, j, M, N)]);
+            if (x < 0.5) x = 0.5; if (x > (N + 0.5)) x = N + 0.5;
+            int i0 = (int)x;
+            int i1 = i0 + 1;
+            if (y < 0.5) y = 0.5; if (y > (M + 0.5)) y = M + 0.5;
+            int j0 = (int)y;
+            int j1 = j0 + 1;
+
+            double s1 = x-i0;
+            double s0 = 1-s1;
+            double t1 = y-j0;
+            double t0 = 1-t1;
+
+            d[IX(i, j, M, N)] = s0 * (t0*d0[IX(i0, j0, M, N)] + t1*d0[IX(i0, j1, M, N)]) + 
+                                s1 * (t0*d0[IX(i1, j0, M, N)] + t1*d0[IX(i1, j1, M, N)]);
+        }
+    }
+    set_bnd(M, N, b, d);
+}
+
+void dens_step(int M, int N, double *x, double *x0, double *u, double *v, double diff, double dt) {
+    //add_source(M, N, x, x0, dt);
+    SWAP(x0, x);
+    diffuse(M, N, 0, x, x0, diff, dt);
+    SWAP(x0, x);
+    advect(M, N, 0, x, x0, u, v, dt);
+}
+
+void project(int M, int N, double *u, double *v, double *p, double *div) {
+    double h = 1.0/N; //FIXME what about M?
+    for(int i = 1; i <= M; i++) {
+        for(int j = 1; j <= N; j++) {
+            div[IX(i, j, M, N)] = -0.5 * h * (u[IX(i+1, j, M, N)] - u[IX(i-1, j, M, N)] +
+                                              v[IX(i, j+1, M, N)] - v[IX(i, j-1, M, N)]);
+            p[IX(i, j, M, N)] = 0;
+        }
+    }
+    set_bnd(M, N, 0, div);
+    set_bnd(M, N, 0, p);
+
+    for(int k = 0; k < 50; k++) {
+        for(int i = 1; i <= M; i++) {
+            for(int j = 1; j <= N; j++) {
+                p[IX(i, j, M, N)] = (div[IX(i, j, M, N)] + p[IX(i-1, j, M, N)] + p[IX(i+1, j, M, N)] +
+                                                           p[IX(i, j-1, M, N)] + p[IX(i, j+1, M, N)]) / 4;
+            }
+        }
+        set_bnd(M, N, 0, p);
+    }
+
+    for(int i = 1; i <= M; i++) {
+        for(int j = 1; j <= N; j++) {
+            u[IX(i, j, M, N)] -= 0.5*(p[IX(i+1, j, M, N)] - p[IX(i-1, j, M, N)])/h;
+            v[IX(i, j, M, N)] -= 0.5*(p[IX(i, j+1, M, N)] - p[IX(i, j-1, M, N)])/h;
+        }
+    }
+    set_bnd(M, N, 1, u);
+    set_bnd(M, N, 2, v);
+}
+
+void vel_step(int M, int N, double *u, double *v, double *u0, double *v0, double visc, double dt) {
+    //add_source(M, N, u, u0, dt);
+    //add_source(M, N, v, v0, dt);
+    SWAP(u0, u);
+    diffuse(M, N, 1, u, u0, visc, dt);
+    SWAP(v0, v);
+    diffuse(M, N, 2, v, v0, visc, dt);
+    project(M, N, u, v, u0, v0);
+    SWAP(u0, u);
+    SWAP(v0, v);
+    advect(M, N, 1, u, u0, u0, v0, dt);
+    advect(M, N, 2, v, v0, u0, v0, dt);
+    project(M, N, u, v, u0, v0);
+}
+
 RenderThread::RenderThread(QObject *parent)
     : QThread(parent)
 {
     restart = false;
+    resize = false;
     abort = false;
 
-    for (int i = 0; i < ColormapSize; ++i)
-        colormap[i] = rgbFromWaveLength(380.0 + (i * 400.0 / ColormapSize));
+    //fprintf(stderr, "Nulling in constructor\n");
+    image_data = NULL;
+    u = v = u_prev = v_prev = dens = dens_prev = NULL;
 }
-//! [0]
 
-//! [1]
 RenderThread::~RenderThread()
 {
     mutex.lock();
@@ -66,116 +194,162 @@ RenderThread::~RenderThread()
 
     wait();
 }
-//! [1]
 
-//! [2]
-void RenderThread::render(double centerX, double centerY, double scaleFactor,
-                          QSize resultSize)
+void RenderThread::render(QSize _resultSize, FluidUpdate update)
 {
     QMutexLocker locker(&mutex);
 
-    this->centerX = centerX;
-    this->centerY = centerY;
-    this->scaleFactor = scaleFactor;
-    this->resultSize = resultSize;
+    if(_resultSize != resultSize) {
+        //fprintf(stderr, "size mismatch: %dx%d != %dx%d\n", _resultSize.height(), _resultSize.width(), resultSize.height(), resultSize.width());
+        resize = true;
+        resultSize = _resultSize;
+    }
+    updateQueue.enqueue(update);
+    //fprintf(stderr, "Size is %d\n", updateQueue.size());
 
     if (!isRunning()) {
         start(LowPriority);
     } else {
-        restart = true;
+        if(resize) {
+            //fprintf(stderr, "Restarting\n");
+            restart = true;
+        }
         condition.wakeOne();
     }
 }
-//! [2]
 
-//! [3]
 void RenderThread::run()
 {
     forever {
+        //fprintf(stderr, "Starting forever loop\n");
         mutex.lock();
-        QSize resultSize = this->resultSize;
-        double scaleFactor = this->scaleFactor;
-        double centerX = this->centerX;
-        double centerY = this->centerY;
-        mutex.unlock();
-//! [3]
-
-//! [4]
-        int halfWidth = resultSize.width() / 2;
-//! [4] //! [5]
-        int halfHeight = resultSize.height() / 2;
-        QImage image(resultSize, QImage::Format_RGB32);
-
-        const int NumPasses = 8;
-        int pass = 0;
-        while (pass < NumPasses) {
-            const int MaxIterations = (1 << (2 * pass + 6)) + 32;
-            const int Limit = 4;
-            bool allBlack = true;
-
-            for (int y = -halfHeight; y < halfHeight; ++y) {
-                if (restart)
-                    break;
-                if (abort)
-                    return;
-
-                uint *scanLine =
-                        reinterpret_cast<uint *>(image.scanLine(y + halfHeight));
-                double ay = centerY + (y * scaleFactor);
-
-                for (int x = -halfWidth; x < halfWidth; ++x) {
-                    double ax = centerX + (x * scaleFactor);
-                    double a1 = ax;
-                    double b1 = ay;
-                    int numIterations = 0;
-
-                    do {
-                        ++numIterations;
-                        double a2 = (a1 * a1) - (b1 * b1) + ax;
-                        double b2 = (2 * a1 * b1) + ay;
-                        if ((a2 * a2) + (b2 * b2) > Limit)
-                            break;
-
-                        ++numIterations;
-                        a1 = (a2 * a2) - (b2 * b2) + ax;
-                        b1 = (2 * a2 * b2) + ay;
-                        if ((a1 * a1) + (b1 * b1) > Limit)
-                            break;
-                    } while (numIterations < MaxIterations);
-
-                    if (numIterations < MaxIterations) {
-                        *scanLine++ = colormap[numIterations % ColormapSize];
-                        allBlack = false;
-                    } else {
-                        *scanLine++ = qRgb(0, 0, 0);
-                    }
-                }
-            }
-
-            if (allBlack && pass == 0) {
-                pass = 4;
-            } else {
-                if (!restart)
-                    emit renderedImage(image, scaleFactor);
-//! [5] //! [6]
-                ++pass;
-            }
-//! [6] //! [7]
-        }
-//! [7]
-
-//! [8]
-        mutex.lock();
-//! [8] //! [9]
-        if (!restart)
-            condition.wait(&mutex);
         restart = false;
+        QSize windowSize = this->resultSize;
+        bool resized = resize;
+        resize = false;
         mutex.unlock();
+
+        if (abort)
+            return;
+
+        int M = windowSize.height(), N = windowSize.width();
+        if(resized) {
+            //fprintf(stderr, "Nulling\n");
+            delete[] u;
+            delete[] v;
+            delete[] u_prev;
+            delete[] v_prev;
+            delete[] dens;
+            delete[] dens_prev;
+            u = v = u_prev = v_prev = dens = dens_prev = NULL;
+
+        }
+
+        if(u == NULL) {
+            //fprintf(stderr, "Newing\n");
+            u = new double[(M+2)*(N+2)];
+            v = new double[(M+2)*(N+2)];
+            u_prev = new double[(M+2)*(N+2)];
+            v_prev = new double[(M+2)*(N+2)];
+            dens = new double[(M+2)*(N+2)];
+            dens_prev = new double[(M+2)*(N+2)];
+            image_data.resize(M*N*4);
+            for(int i = 0; i < ((M+2)*(N+2)); i++) {
+                u[i] = v[i] = u_prev[i] = v_prev[i] = dens[i] = dens_prev[i] = 0.0f;
+            }
+        }
+
+        while(1) {
+            if(updateQueue.empty())
+              break;
+
+            mutex.lock();
+            if(updateQueue.empty()) {
+                mutex.unlock();
+                break;
+            }
+            const FluidUpdate fu = updateQueue.dequeue();
+            mutex.unlock();
+
+            //fprintf(stderr, "(M,N)=(%d,%d), pos(%d, %d) vel(%f, %f) %01d %01d\n", M, N, fu.p.x(), fu.p.y(), fu.v.x(), fu.v.y(), fu.injectD, fu.injectV);
+            if(fu.p.x() >= N || fu.p.y() >= M || fu.p.x() < 0 || fu.p.y() < 0)
+              continue;
+            if(fu.injectD)
+                dens_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] += density_increment;
+                //dens_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] = 50;
+            if(fu.injectV) {
+                u_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] += velocity_increment / N * fu.v.x();
+                v_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] += velocity_increment / M * fu.v.y();
+                //u_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] = velocity_increment / N * fu.v.x();
+                //v_prev[IX(fu.p.y()+1, fu.p.x()+1, M, N)] = velocity_increment / M * fu.v.y();
+            }
+        }
+
+        if (restart)
+            continue;
+        //fprintf(stderr, "Before vel_step, u is %p\n", u);
+        double dt = (double)timer.elapsed() / 1000.0;
+        fprintf(stderr, "dt=%f\n", dt);
+        timer.restart();
+        vel_step(M, N, u, v, u_prev, v_prev, VISC, dt);
+
+        if (restart)
+            continue;
+
+        //fprintf(stderr, "Before dens_step, u is %p\n", u);
+        dens_step(M, N, dens, dens_prev, u, v, DIFF, dt);
+
+        if (restart)
+            continue;
+
+
+        double minval = *(std::max_element(dens, dens+((M+2)*(N+2))));
+        double maxval = *(std::max_element(dens, dens+((M+2)*(N+2))));
+        fprintf(stderr, "min/max of dens is (%f, %f)\n", minval, maxval);
+        minval = *(std::max_element(dens_prev, dens_prev+((M+2)*(N+2))));
+        maxval = *(std::max_element(dens_prev, dens_prev+((M+2)*(N+2))));
+        fprintf(stderr, "min/max of dens_prev is (%f, %f)\n", minval, maxval);
+        minval = *(std::max_element(u, u+((M+2)*(N+2))));
+        maxval = *(std::max_element(u, u+((M+2)*(N+2))));
+        fprintf(stderr, "min/max of u is (%f, %f)\n", minval, maxval);
+        minval = *(std::max_element(v, v+((M+2)*(N+2))));
+        maxval = *(std::max_element(v, v+((M+2)*(N+2))));
+        fprintf(stderr, "min/max of v is (%f, %f)\n\n", minval, maxval);
+
+        fprintf(stderr, ".");
+        QRgb *walker = reinterpret_cast<QRgb*>(image_data.data());
+        double *denswalk = &dens[IX(0,1,M,N)];
+        for(int i = 1; i <= M; i++) {
+            ++denswalk;
+            for(int j = 1; j <= N; j++) {
+                int c = std::min(255, (int)((*denswalk++)*255.0));
+                //if(c > 0) {
+                //    fprintf(stderr, "(%d, %d) is %f (%d)\n", i, j, dens[IX(i, j, M, N)], c);
+                //}
+                *walker++ = qRgb(0, c, 0);
+            }
+            ++denswalk;
+        }
+
+        SWAP(u, u_prev);
+        SWAP(v, v_prev);
+        SWAP(dens, dens_prev);
+
+        if(!restart) {
+            QImage image(reinterpret_cast<const uchar *>(image_data.constData()), N, M, QImage::Format_RGB32);
+            //fprintf(stderr, "Emitting\n");
+            //FIXME don't copy the image every time
+            emit renderedImage(image);
+        }
+
+        //mutex.lock();
+        //if (!restart)
+        //    condition.wait(&mutex);
+        //restart = false;
+        //mutex.unlock();
     }
 }
-//! [9]
 
-//! [10]
 uint RenderThread::rgbFromWaveLength(double wave)
 {
     double r = 0.0;
@@ -212,4 +386,3 @@ uint RenderThread::rgbFromWaveLength(double wave)
     b = pow(b * s, 0.8);
     return qRgb(int(r * 255), int(g * 255), int(b * 255));
 }
-//! [10]

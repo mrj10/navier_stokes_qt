@@ -43,10 +43,10 @@
 
 #include <QPixmap>
 #include <QWidget>
+#include <QElapsedTimer>
 
 #include "renderthread.h"
 
-//! [0]
 class FluidWidget : public QWidget
 {
     Q_OBJECT
@@ -64,7 +64,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event);
 
 private slots:
-    void updatePixmap(const QImage &image, double scaleFactor);
+    void updatePixmap(const QImage &image);
 
 private:
     void zoom(double zoomFactor);
@@ -72,12 +72,8 @@ private:
 
     RenderThread thread;
     QPixmap pixmap;
-    QPoint pixmapOffset;
     QPoint lastDragPos;
-    double centerX;
-    double centerY;
-    double pixmapScale;
-    double curScale;
+    QElapsedTimer dragTimer;
 };
 //! [0]
 

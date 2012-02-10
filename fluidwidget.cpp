@@ -39,79 +39,37 @@
 ****************************************************************************/
 
 #include <QtGui>
-
-#include <math.h>
-
+#include <cmath>
 #include "fluidwidget.h"
+#include "fluid_update.h"
 
-//! [0]
-const double DefaultCenterX = -0.637011f;
-const double DefaultCenterY = -0.0395159f;
-const double DefaultScale = 0.00403897f;
-
-const double ZoomInFactor = 0.8f;
-const double ZoomOutFactor = 1 / ZoomInFactor;
-const int ScrollStep = 20;
-//! [0]
-
-//! [1]
 FluidWidget::FluidWidget(QWidget *parent)
     : QWidget(parent)
 {
-    centerX = DefaultCenterX;
-    centerY = DefaultCenterY;
-    pixmapScale = DefaultScale;
-    curScale = DefaultScale;
-
     qRegisterMetaType<QImage>("QImage");
-    connect(&thread, SIGNAL(renderedImage(QImage,double)),
-            this, SLOT(updatePixmap(QImage,double)));
+    connect(&thread, SIGNAL(renderedImage(QImage)),
+            this, SLOT(updatePixmap(QImage)));
 
     setWindowTitle(tr("Fluid"));
 #ifndef QT_NO_CURSOR
     setCursor(Qt::CrossCursor);
 #endif
-    resize(550, 400);
+    resize(1024, 1024);
 }
-//! [1]
 
-//! [2]
 void FluidWidget::paintEvent(QPaintEvent * /* event */)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::black);
+    //painter.fillRect(rect(), Qt::black);
 
     if (pixmap.isNull()) {
         painter.setPen(Qt::white);
         painter.drawText(rect(), Qt::AlignCenter,
                          tr("Rendering initial image, please wait..."));
-//! [2] //! [3]
         return;
-//! [3] //! [4]
     }
-//! [4]
 
-//! [5]
-    if (curScale == pixmapScale) {
-//! [5] //! [6]
-        painter.drawPixmap(pixmapOffset, pixmap);
-//! [6] //! [7]
-    } else {
-//! [7] //! [8]
-        double scaleFactor = pixmapScale / curScale;
-        int newWidth = int(pixmap.width() * scaleFactor);
-        int newHeight = int(pixmap.height() * scaleFactor);
-        int newX = pixmapOffset.x() + (pixmap.width() - newWidth) / 2;
-        int newY = pixmapOffset.y() + (pixmap.height() - newHeight) / 2;
-
-        painter.save();
-        painter.translate(newX, newY);
-        painter.scale(scaleFactor, scaleFactor);
-        QRectF exposed = painter.worldTransform().inverted().mapRect(rect()).adjusted(-1, -1, 1, 1);
-        painter.drawPixmap(exposed, pixmap, exposed);
-        painter.restore();
-    }
-//! [8] //! [9]
+    painter.drawPixmap(0, 0, pixmap);
 
     QString text = tr("Use mouse wheel or the '+' and '-' keys to zoom. "
                       "Press and hold left mouse button to scroll.");
@@ -126,114 +84,113 @@ void FluidWidget::paintEvent(QPaintEvent * /* event */)
     painter.drawText((width() - textWidth) / 2,
                      metrics.leading() + metrics.ascent(), text);
 }
-//! [9]
 
-//! [10]
 void FluidWidget::resizeEvent(QResizeEvent * /* event */)
 {
-    thread.render(centerX, centerY, curScale, size());
+    thread.render(size()/4, FluidUpdate());
 }
-//! [10]
 
-//! [11]
 void FluidWidget::keyPressEvent(QKeyEvent *event)
 {
     switch (event->key()) {
     case Qt::Key_Plus:
-        zoom(ZoomInFactor);
+        //zoom(ZoomInFactor);
         break;
     case Qt::Key_Minus:
-        zoom(ZoomOutFactor);
+        //zoom(ZoomOutFactor);
         break;
     case Qt::Key_Left:
-        scroll(-ScrollStep, 0);
+        //scroll(-ScrollStep, 0);
         break;
     case Qt::Key_Right:
-        scroll(+ScrollStep, 0);
+        //scroll(+ScrollStep, 0);
         break;
     case Qt::Key_Down:
-        scroll(0, -ScrollStep);
+        //scroll(0, -ScrollStep);
         break;
     case Qt::Key_Up:
-        scroll(0, +ScrollStep);
+        //scroll(0, +ScrollStep);
         break;
     default:
         QWidget::keyPressEvent(event);
     }
 }
-//! [11]
 
-//! [12]
 void FluidWidget::wheelEvent(QWheelEvent *event)
 {
-    int numDegrees = event->delta() / 8;
-    double numSteps = numDegrees / 15.0f;
-    zoom(pow(ZoomInFactor, numSteps));
+    //int numDegrees = event->delta() / 8;
+    //double numSteps = numDegrees / 15.0f;
+    //zoom(pow(ZoomInFactor, numSteps));
 }
-//! [12]
 
-//! [13]
 void FluidWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
-        lastDragPos = event->pos();
+    {
+        update();
+        thread.render(size()/4, FluidUpdate(event->pos()/4, QVector2D(), true, false));
+    }
+    lastDragPos = event->pos()/4;
 }
-//! [13]
 
-//! [14]
 void FluidWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    if (event->buttons() & Qt::LeftButton) {
-        pixmapOffset += event->pos() - lastDragPos;
+    const bool density = event->buttons() & Qt::LeftButton;
+    const bool velocity = event->buttons() & Qt::RightButton;
+    if (density || velocity) {
+        qint64 dragTime = dragTimer.elapsed();
+        dragTimer.restart();
+        if(dragTime < 1)
+            dragTime = 1; //Take at least 1ms
+        if(dragTime > 100) //Clip to 100ms
+            dragTime = 100;
+        QVector2D dragMovement(event->pos() - lastDragPos);
+        //Divide by dragTime if you want the vector to actually be a mouse velocity rather than just the number of pixels the mouse moved
+        //dragMovement /= ((double)dragTime/1000);
         lastDragPos = event->pos();
         update();
+        thread.render(size()/4, FluidUpdate(event->pos()/4, dragMovement/4, density, velocity));
     }
 }
-//! [14]
 
-//! [15]
 void FluidWidget::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton) {
-        pixmapOffset += event->pos() - lastDragPos;
-        lastDragPos = QPoint();
+    //if (event->button() == Qt::LeftButton) {
+    //    pixmapOffset += event->pos() - lastDragPos;
+    //    lastDragPos = QPoint();
 
-        int deltaX = (width() - pixmap.width()) / 2 - pixmapOffset.x();
-        int deltaY = (height() - pixmap.height()) / 2 - pixmapOffset.y();
-        scroll(deltaX, deltaY);
-    }
+     //   int deltaX = (width() - pixmap.width()) / 2 - pixmapOffset.x();
+     //   int deltaY = (height() - pixmap.height()) / 2 - pixmapOffset.y();
+     //    scroll(deltaX, deltaY);
+    //}
 }
-//! [15]
 
-//! [16]
-void FluidWidget::updatePixmap(const QImage &image, double scaleFactor)
+void FluidWidget::updatePixmap(const QImage &image)
 {
-    if (!lastDragPos.isNull())
-        return;
+    //if (!lastDragPos.isNull())
+    //    return;
 
-    pixmap = QPixmap::fromImage(image);
-    pixmapOffset = QPoint();
-    lastDragPos = QPoint();
-    pixmapScale = scaleFactor;
+    pixmap = QPixmap::fromImage(image.scaled(size()));
+    //pixmapOffset = QPoint();
+    //lastDragPos = QPoint();
     update();
 }
-//! [16]
 
-//! [17]
 void FluidWidget::zoom(double zoomFactor)
 {
+    /*
     curScale *= zoomFactor;
     update();
-    thread.render(centerX, centerY, curScale, size());
+    thread.render(size());
+    */
 }
-//! [17]
 
-//! [18]
 void FluidWidget::scroll(int deltaX, int deltaY)
 {
+    /*
     centerX += deltaX * curScale;
     centerY += deltaY * curScale;
     update();
-    thread.render(centerX, centerY, curScale, size());
+    thread.render(size());
+    */
 }
-//! [18]
